@@ -16,6 +16,20 @@
           </mappings>
         </serverdata>
       </paths>
+      <paths name="liujinrui@210.30.97.95:51666 password (2)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="liujinrui@210.30.97.95:51666 password (3)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/project/HAN-entity-connection" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
     </serverData>
   </component>
 </project>
