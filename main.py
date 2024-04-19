@@ -84,11 +84,11 @@ def load_ent_vec(file):
         ent_v = ent[1].split(',')
         for j in range(len(ent_v)):
             ent_v[j] = float(ent_v[j])
-        ent_dic[int(ent[0])] = torch.Tensor(ent_v)
+        ent_dic[ent[0]] = torch.Tensor(ent_v)
     return ent_dic
 
 
-def get_mentions_in_sent(start, sent_index, mentions):  # 获取对应句子的所有mention信息
+def get_mentions_in_sent(start, sent_index, mentions):  # 获取对应句子的所有mention信息 # 调试过后 应该是没问题
     sent_m = []
     next_n = 0
     for m_n, mention in enumerate(mentions[start:], start):  # 左闭右开
@@ -99,7 +99,7 @@ def get_mentions_in_sent(start, sent_index, mentions):  # 获取对应句子的�
         if mention["sent_index"] == sent_index:  # 如果发现句子匹配
             # sent_m.append([mention["gold_index"]]) # 加入值1
             candidates = mention["candidates"].split("\t")
-            can_l = []
+            can_l = [] # 一个mention的候选者
             for i in range(len(candidates)):  # 获取所有candidates的标号
                 if i % 2 == 0:
                     continue
@@ -116,16 +116,16 @@ def get_stat(list_doc, mentions):  # 获取stat，包含一系列以句子为单
     for doc_n, doc in enumerate(list_doc):
         start_index = 0
         for sent_n, sent in enumerate(list_doc[doc_n]):
-            sent_mentions, start_index = get_mentions_in_sent(start_index, sent_n, mentions)
+            sent_mentions, start_index = get_mentions_in_sent(start_index, sent_n, mentions[doc_n])
             stat.append((len(sent), len(doc), doc_n, sent_n, sent, sent_mentions))
     return sorted(stat, reverse=True)
-    # stat结构：按照句子长度排序的(句子长度,文档长度,文档标号,句子在文档中的标号,句子原文,[([所有备选标号],对应正确标号,对应句子在文档中的标号)])
+    # stat结构：按照句子长度排序的(句子长度,文档长度,文档标号,句子在文档中的标号,句子原文,[([str :所有备选标号],对应正确标号,对应句子在文档中的标号)])
 
 
 def batcher_builder(vectorizer, trim=True):
     # 它接受一个 vectorizer 对象和一个可选的 trim 参数（默认为 True），并返回一个名为 doc_batch 的内部函数。
     # 主要作用是将一系列文本对打包成一个批次，并处理这些评论以进行机器学习或深度学习模型的训练。
-    def doc_batch(dic):
+    def doc_batch(dic): # 运行正常
         # 这是 tuple_batcher_builder 返回的内部函数，它接受一个字典dic，包括所有信息
         document = []
         mentions = []
@@ -134,7 +134,7 @@ def batcher_builder(vectorizer, trim=True):
             document.append(dic[i]["document"])
             mentions.append(dic[i]["mentions"])
         list_doc = vectorizer.vectorize_batch(document, trim)  # 进行分词处理
-        stat = get_stat(list_doc, mentions)
+        stat = get_stat(list_doc, mentions) # list_doc : [[tensor{},tensor{}...]...]
         # stat结构：按照句子长度排序的(句子长度,文档长度,文档标号,句子在文档中的标号,句子原文,[([所有备选标号],对应正确标号,对应句子在文档中的标号)])
         max_len = stat[0][0]  # 找到最长的哪一个句子的长度
         batch_t = torch.zeros(len(stat), max_len, dtype=torch.long)
@@ -144,7 +144,7 @@ def batcher_builder(vectorizer, trim=True):
                 batch_t[i, j] = w  # 遍历 stat 列表，将每个句子中的每个单词填充到 batch_t 张量的相应位置 里面是文本在向量表中的标号！！不是向量表示
         stat = [(ls, lr, r_n, s_n, s_m) for ls, lr, r_n, s_n, _, s_m in stat]  # 去掉了原文表示 没必要再存储一份
         # 返回 处理好的句子表示 [句子[单词序号]]
-        # [[单词标号]] 统计数据 排序的(句子长度,文档长度,文档标号,句子在文档中的标号,[([所有备选标号],对应正确标号,对应句子在文档中的标号)])
+        # [[单词标号]] 统计数据 排序的(句子长度,文档长度,文档标号,句子在文档中的标号,[([str:所有备选标号],对应正确标号,对应句子在文档中的标号)])
         # 和原来的文档结构
         return batch_t, stat, document
 
@@ -157,10 +157,10 @@ def get_loss(criterion, out):  # [tensor[a,b,c.....],int]
         gold_n = mention[1] - 1
         gold = mention[0][gold_n]
         length = mention[0].shape[0]  # torch.Size([3])
-        gold = torch.full((length,), gold)
+        gold = torch.full((length,), gold.item())
         target = torch.ones(length, )
-        loss = criterion(gold, mention[0], target)
-        temp = torch.cat(temp, loss)
+        loss = criterion(gold, mention[0], target).unsqueeze(0)
+        temp = torch.cat((temp, loss))
     return temp.mean(dim=0)
     # [loss,.....]
 
@@ -169,7 +169,7 @@ def accuracy(out):  # [tensor[a,b,c.....],int]
     all_acc = 0
     for men in out:
         _, max_i = torch.max(men[0], 0)
-        if max_i == men[1]:
+        if max_i.item() == men[1]:
             all_acc += 1
     temp = torch.Tensor([all_acc]).float()
     return all_acc, temp / len(out) * 100
@@ -192,24 +192,24 @@ def train(epoch, epochs, net, optimizer, dataset, criterion, device):
     # epoch_loss: 用于累计当前epoch的损失值。
     # ok_all: 用于累计当前epoch中预测正确的样本数。
     # data_tensors: 使用new_tensors函数创建新的张量（为批处理数据准备的）。
-    with tqdm(total=len(dataset), desc="训练中:Epoch {}/{}".format(epoch + 1, epochs)) as pbar:
+    with tqdm(total=len(dataset), desc="训练中:Epoch {}/{}".format(epoch, epochs)) as pbar:
         #  遍历数据集中的每个批次
         #         # 返回 处理好的句子表示 tensor[句子[单词标号]]
         #         # 统计数据 排序的(句子长度,文档长度,文档标号,句子在文档中的标号,[([所有备选标号],对应正确标号,对应句子在文档中的标号)])
         #         # 和原来的文档结构
         #         return batch_t, stat, document
-        for iteration, (batch_t, stat, dcoument) in enumerate(dataset):
+        for iteration, (batch_t, stat, document) in enumerate(dataset):
             data = data_tensors.resize_(batch_t.size()).copy_(batch_t)
             optimizer.zero_grad()  # 清除之前的梯度
             out = net(data, stat)  # (评分tensor,gold）list 前向传播
             loss = get_loss(criterion, out)  # tensor[loss]
             ok, per = accuracy(out)
             # 累计当前批次的损失值
-            epoch_loss += loss.data[0]
+            epoch_loss += loss.item()
             # 执行反向传播，计算梯度
             loss.backward()
             optimizer.step()  # 优化
-            ok_all += per.data[0]
+            ok_all += per.item()
 
             # 使用优化器更新模型的参数
             optimizer.step()
@@ -247,7 +247,7 @@ def main():
     batch_size = 4
     learning_rate = 1e-5
     epochs = 500
-    num_workers = 2
+    num_workers = 0
     clip_grad = 10
 
     # 路径
@@ -276,7 +276,7 @@ def main():
     stop_word = load_stop_words(file_stop_word)
     # 加载实体矩阵特征向量表
     ent_dic = load_ent_vec(file_ent_vec)
-    print(len(ent_dic[25493]))
+    print(len(ent_dic['25493']))
 
     # 加载分词器
     vectorizer = Vectorizer(max_word_len=max_words, max_sent_len=max_sents)
@@ -310,10 +310,12 @@ def main():
     # 定义优化器
     optimizer = optim.SGD(net.parameters(), lr=learning_rate)  # 使用随机梯度下降（SGD）作为优化方法，并且学习率（learning rate）设置为1e-5
     # 梯度裁剪是一种防止梯度爆炸的技术。
-    nn.utils.clip_grad_norm(net.parameters(), clip_grad)
+    # nn.utils.clip_grad_norm(net.parameters(), clip_grad)
+    nn.utils.clip_grad_norm_(net.parameters(), clip_grad)
+
     for epoch in range(1, epochs + 1):
-        train(epoch, epochs, net, optimizer, dataloader_train, criterion, device)
-        test(epoch, epochs, net, dataloader_test, device)
+        train(epoch, epochs+1, net, optimizer, dataloader_train, criterion, device)
+        test(epoch, epochs+1, net, dataloader_test, device)
 
 
 if __name__ == '__main__':  # 执行入口 以后要写一些配置在里面

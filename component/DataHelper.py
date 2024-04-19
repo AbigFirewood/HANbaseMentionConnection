@@ -21,14 +21,14 @@ from torch.utils.data.sampler import Sampler
 
 
 class DocumentsDataset(Dataset):
-    def __init__(self, documents):
+    def __init__(self, documents): # 暂时没有问题
         super(DocumentsDataset, self).__init__()
         self.documents = documents  # 存储数据的
 
-    def __len__(self):  # 返回长度 这个是需要重写的
+    def __len__(self):  # 返回长度 这个是需要重写的 暂时没有问题
         return len(self.documents)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index): # 暂时没有问题
         return self.documents[index]
 
     @staticmethod  # 获取train test 包装
@@ -36,7 +36,7 @@ class DocumentsDataset(Dataset):
         return DocumentsDataset(train), DocumentsDataset(test)
 
 
-class Vectorizer():  # 文本分词器对象
+class Vectorizer():  # 文本分词器对象 已经调试没有问题
     def __init__(self, word_dict=None, max_sent_len=8, max_word_len=32):
         self.word_dict = word_dict  # 一个可选参数，用于传入一个词汇字典。如果没有传入，则默认为 None
         self.nlp = spacy.load("en_core_web_sm")
@@ -46,10 +46,10 @@ class Vectorizer():  # 文本分词器对象
         self.max_word_len = max_word_len  # 一个可选参数，用于设置单词的最大长度。如果没有传入，则默认为 32。
         self.stop_words = None
 
-    def vectorize_batch(self, t, trim=True):
+    def vectorize_batch(self, t, trim=True): # 函数已经调试没有问题
         return self._vect_dict(t, trim)
 
-    def _vect_dict(self, t, trim):
+    def _vect_dict(self, t, trim): # 函数已经调试没有问题
         # 该方法接受两个参数：t（待处理的文本列表）和 trim（一个布尔值，指示是否需要对文本进行截断处理）。
         if self.word_dict is None:
             print(
