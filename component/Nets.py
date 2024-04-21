@@ -79,7 +79,7 @@ class HANConnect(nn.Module):
     def set_ent_dic(self, ent_dic):  # 设置嵌入向量存储
         self.ent_dic = ent_dic
 
-    def get_sent_view(self, embs, mentions): # 将mentions的句子表示加入元组中   [([所有备选标号],对应正确标号,对应句子在文档中的标号)]) 调试结束！！解决问题
+    def get_sent_view(self, embs, mentions):  # 将mentions的句子表示加入元组中   [([所有备选标号],对应正确标号,对应句子在文档中的标号)]) 调试结束！！解决问题
         mentions = list(mentions)
         for i in range(len(mentions)):
             mentions[i] = [(a, b, embs[i]) for j, (a, b, _) in enumerate(mentions[i])]
@@ -105,7 +105,8 @@ class HANConnect(nn.Module):
                 menbuilder[doc_id].extend(sent_view_mentions)
         # 获得有序字典一个 文本id 和 句子的id 对应 {文本[重新排序的句子id]}
         list_r = list(reversed(builder))  # 反向表示
-        docs = self._buffers["docs"].clone().detach().resize_(len(builder), len(builder[list_r[0]]), sents.size(1)).fill_(0)
+        docs = self._buffers["docs"].clone().detach().resize_(len(builder), len(builder[list_r[0]]),
+                                                              sents.size(1)).fill_(0)
         # docs 的表示 [文档[句子[句子特征]]]
         lens = []
         real_order = []
@@ -134,23 +135,26 @@ class HANConnect(nn.Module):
         for (candidates, gold_index, sent_view, doc_view) in listall:
             # doc_sim = self.sim(self.lin_emb(doc_view),)
             scores = torch.Tensor()
+
             for candidate in candidates:
                 if candidate not in self.ent_dic:
-                    candidate_emb = F.normalize(torch.randn(self.emb_size,),dim = 0)  # 找不到随机初始化
+                    candidate_emb = F.normalize(torch.randn(self.emb_size, ), dim=0)
+                    self.ent_dic[candidate]= candidate_emb # 加入表示
+                    # candidate_emb = candidate_emb.cuda()  # 找不到随机初始化
                 else:
-                    candidate_emb = self.ent_dic[candidate]  # 加载对应特征嵌入
+                    candidate_emb = self.ent_dic[candidate].cuda()  # 加载对应特征嵌入
                 # print(doc_view.shape[0])
                 # print(sent_view.shape[0])
-                doc_sim = self.sim(candidate_emb, self.lin_emb(doc_view),dim = 0).unsqueeze(0)  # 计算相似度
+                doc_sim = self.sim(candidate_emb, self.lin_emb(doc_view), dim=0).unsqueeze(0).cuda()  # 计算相似度
                 # print(doc_sim.shape[0])
-                sent_sim = self.sim(candidate_emb, self.lin_emb(sent_view),dim = 0).unsqueeze(0)
+                sent_sim = self.sim(candidate_emb, self.lin_emb(sent_view), dim=0).unsqueeze(0).cuda()
                 # print(sent_sim.shape[0])
                 # 计算相似度
                 temp = torch.cat((doc_sim, sent_sim))
                 # print(temp.shape[0])
                 # temp = temp.squeeze()
-                score = self.lin_out(temp)
-                scores = torch.cat((score, scores),dim = 0)
+                score = self.lin_out(temp).cuda()
+                scores = torch.cat((score, scores), dim=0)
             finalInfo.append((scores, gold_index))
         return finalInfo
 
@@ -170,7 +174,8 @@ class HANConnect(nn.Module):
         sent_view_mentions = self.get_sent_view(sent_embs, mentions)  # mentions添加句子表示后的结果
         # [([所有备选标号],对应正确标号,句子向量表示)...]
         doc_embs, lens, real_order, mentions_l = self._reorder_sent(sent_embs,
-                                                                    zip(doc_len, doc_id, sent_id, tuple(sent_view_mentions)))
+                                                                    zip(doc_len, doc_id, sent_id,
+                                                                        tuple(sent_view_mentions)))
         packed_rev = torch.nn.utils.rnn.pack_padded_sequence(doc_embs, torch.Tensor(lens), batch_first=True)
         doc_embs = self.sent(packed_rev)  # 获取嵌入
 
