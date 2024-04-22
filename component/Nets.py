@@ -134,26 +134,29 @@ class HANConnect(nn.Module):
         finalInfo = []
         for (candidates, gold_index, sent_view, doc_view) in listall:
             # doc_sim = self.sim(self.lin_emb(doc_view),)
-            scores = torch.Tensor()
+            all_device = doc_view.device  # 确定新建tensor的位置
+            scores = torch.Tensor()  # .to(all_device)
 
             for candidate in candidates:
                 if candidate not in self.ent_dic:
-                    candidate_emb = F.normalize(torch.randn(self.emb_size, ), dim=0)
-                    self.ent_dic[candidate]= candidate_emb # 加入表示
-                    # candidate_emb = candidate_emb.cuda()  # 找不到随机初始化
+                    candidate_emb = F.normalize(torch.randn(self.emb_size, ), dim=0) # 找不到随机初始化
+                    self.ent_dic[candidate] = candidate_emb  # 加入词典
+                    # print("get!!!!")
+                    # candidate_emb = candidate_emb.to(all_device)   # 统一设备
                 else:
-                    candidate_emb = self.ent_dic[candidate].cuda()  # 加载对应特征嵌入
+                    candidate_emb = self.ent_dic[candidate]  # .to(all_device)  # 加载对应特征嵌入
                 # print(doc_view.shape[0])
                 # print(sent_view.shape[0])
-                doc_sim = self.sim(candidate_emb, self.lin_emb(doc_view), dim=0).unsqueeze(0).cuda()  # 计算相似度
+                candidate_emb = candidate_emb.to(all_device)  # 统一设备
+                doc_sim = self.sim(candidate_emb, self.lin_emb(doc_view), dim=0).unsqueeze(0).to(all_device)  # 计算相似度
                 # print(doc_sim.shape[0])
-                sent_sim = self.sim(candidate_emb, self.lin_emb(sent_view), dim=0).unsqueeze(0).cuda()
+                sent_sim = self.sim(candidate_emb, self.lin_emb(sent_view), dim=0).unsqueeze(0).to(all_device)
                 # print(sent_sim.shape[0])
                 # 计算相似度
                 temp = torch.cat((doc_sim, sent_sim))
                 # print(temp.shape[0])
                 # temp = temp.squeeze()
-                score = self.lin_out(temp).cuda()
+                score = self.lin_out(temp).to(all_device)
                 scores = torch.cat((score, scores), dim=0)
             finalInfo.append((scores, gold_index))
         return finalInfo

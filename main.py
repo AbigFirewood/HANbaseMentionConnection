@@ -35,7 +35,7 @@ def get_word_tenser(string):
 
 
 def load_embeddings(file):  # 加载HAN词嵌入表
-    emb_file = open(file, "r", encoding='utf-8').readlines()  # lines!!!!!!!!!不是line!!!!
+    emb_file = open(file, "r", encoding='utf-8').readlines()
     word_d = {}  # 初始化字典
     word_d["_padding_"] = 0  # padding
     word_d["_unk_word_"] = 1  # unKnown
@@ -96,7 +96,6 @@ def get_mentions_in_sent(start, sent_index, mentions):  # 获取对应句子的�
     next_n = 0
     for m_n, mention in enumerate(mentions[start:], start):  # 左闭右开
         if mention["sent_index"] > sent_index:
-            # 数据集中 句子标号是排序过的 因此如果发现sent_index大于index 证明后面不会再有了 返回
             next_n = m_n
             break
         if mention["sent_index"] == sent_index:  # 如果发现句子匹配
@@ -126,8 +125,6 @@ def get_stat(list_doc, mentions):  # 获取stat，包含一系列以句子为单
 
 
 def batcher_builder(vectorizer, trim=True):
-    # 它接受一个 vectorizer 对象和一个可选的 trim 参数（默认为 True），并返回一个名为 doc_batch 的内部函数。
-    # 主要作用是将一系列文本对打包成一个批次，并处理这些评论以进行机器学习或深度学习模型的训练。
     def doc_batch(dic):  # 运行正常
         # 这是 tuple_batcher_builder 返回的内部函数，它接受一个字典dic，包括所有信息
         document = []
@@ -155,13 +152,14 @@ def batcher_builder(vectorizer, trim=True):
 
 
 def get_loss(criterion, out):  # [tensor[a,b,c.....],int]
-    temp = torch.Tensor().cuda()
+    device = out[0][0].device
+    temp = torch.Tensor().to(device)
     for mention in out:
         gold_n = mention[1] - 1
         gold = mention[0][gold_n]
         length = mention[0].shape[0]  # torch.Size([3])
-        gold = torch.full((length,), gold.item()).cuda()
-        target = torch.ones(length, ).cuda()
+        gold = torch.full((length,), gold.item()).to(device)
+        target = torch.ones(length, ).to(device)
         loss = criterion(gold, mention[0], target).unsqueeze(0)
         temp = torch.cat((temp, loss))
     return temp.mean(dim=0)
@@ -225,16 +223,11 @@ def train(epoch, epochs, net, optimizer, dataset, criterion, device, logger):
             loss.backward()
             optimizer.step()  # 优化
             ok_all += per.item()
-
             # 使用优化器更新模型的参数
             optimizer.step()
             # 更新进度条
             pbar.update(1)
             pbar.set_postfix({"acc": ok_all / (iteration + 1), "CE": epoch_loss / (iteration + 1)})
-
-        # print("===> Epoch {}/{} Complete: Avg. Loss: {:.4f}, {}% accuracy".format(epoch, epochs,
-        # epoch_loss / len(dataset),
-        # ok_all / len(dataset)))
         logger.info("===> Epoch {}/{} Complete: Avg. Loss: {:.4f}, {}% accuracy".format(epoch, epochs,
                                                                                         epoch_loss / len(dataset),
                                                                                         ok_all / len(dataset)))
@@ -244,22 +237,20 @@ def test(epoch, epochs, net, dataset, criterion, device, logger, max_acc):
     epoch_loss = 0
     ok_all = 0
     pred = 0
-    skipped = 0
-    data_tensors = torch.LongTensor().to(device)  # 准备数据tenser
-    with tqdm(total=len(dataset), desc="测试中:Epoch {}/{}".format(epoch + 1, epochs)) as pbar:
-        for iteration, (batch_t, stat, dcoument) in enumerate(dataset):
-            data = data_tensors.resize_(batch_t.size()).copy_(batch_t)
-            out = net(data, stat)  # (评分tensor,gold）list 前向传播
-            loss = get_loss(criterion, out)
-            ok, per = accuracy(out)
-            epoch_loss += loss.item()
-            ok_all += per.data[0]
-            pred += 1
-            pbar.update(1)
-            pbar.set_postfix({"acc": ok_all / pred, "skipped": skipped})
-    max_acc = max(max_acc, ok_all / pred)  # 更新最大准确
-    # print("===> TEST Complete:  Avg. Loss: {:.4f}, {}% accuracy {}% max_acc".format(epoch_loss / len(dataset),
-    # ok_all / pred, max_acc))
+    with torch.no_grad():
+        data_tensors = torch.LongTensor().to(device)  # 准备数据tenser
+        with tqdm(total=len(dataset), desc="测试中:Epoch {}/{}".format(epoch + 1, epochs)) as pbar:
+            for iteration, (batch_t, stat, dcoument) in enumerate(dataset):
+                data = data_tensors.resize_(batch_t.size()).copy_(batch_t)
+                out = net(data, stat)  # (评分tensor,gold）list 前向传播
+                loss = get_loss(criterion, out)
+                ok, per = accuracy(out)
+                epoch_loss += loss.item()
+                ok_all += per.data[0]
+                pred += 1
+                pbar.update(1)
+                pbar.set_postfix({"acc": ok_all / pred})
+        max_acc = max(max_acc, ok_all / pred)  # 更新最大准确
     logger.info("===> TEST Complete:  Avg. Loss: {:.4f}, {}% accuracy {}% max_acc".format(epoch_loss / len(dataset),
                                                                                           ok_all / pred, max_acc))
     return max_acc
@@ -271,8 +262,8 @@ def main():
     hid_size = 300  # 设置表征维度
     batch_size = 4
     learning_rate = 1e-5
-    epochs = 500
-    num_workers = 0  # 2 # 0
+    epochs = 499
+    num_workers = 2
     clip_grad = 10
 
     # 路径
@@ -281,11 +272,11 @@ def main():
     file_word_info = ".//dataset//word_info.txt"
     file_stop_word = ".//dataset//stopword.txt"
     file_ent_vec = ".//dataset//ent_vec.txt"
-    file_log = ".//log//log.txt"
+    file_log = ".//log//log1.txt"
     logger = log_helper(file_log)
 
     # 分词器设置
-    max_words = 8
+    max_words = 16
     max_sents = 32
 
     # 设备
@@ -336,7 +327,6 @@ def main():
     # print("-" * 20)
     # 定义优化器
     optimizer = optim.SGD(net.parameters(), lr=learning_rate)  # 使用随机梯度下降（SGD）作为优化方法，并且学习率（learning rate）设置为1e-5
-    # 梯度裁剪是一种防止梯度爆炸的技术。
     nn.utils.clip_grad_norm_(net.parameters(), clip_grad)
     start = time.perf_counter()  # 记录时间开始
     logger.info(32 * "-" + "program start!" + 32 * "-")
@@ -347,11 +337,10 @@ def main():
         max_test_acc = test(epoch, epochs + 1, net, dataloader_test, criterion, device, logger, max_test_acc)
         logger.info(32 * "-" + "epoch{}end!".format(epoch) + 32 * "-")
     end = time.perf_counter()
-    # print("The program ends in {} s".format(str(end - start)))
     logger.info(32 * "-" + "The program ends in {} s".format(str(end - start)) + 32 * "-")
     logger.info("The max_test_acc is {}".format(max_test_acc))
-    logger.info("device" + str(torch.cuda.get_device_name(0) if device == 'cuda' else 'cpu'))
+    logger.info("device" + str(torch.cuda.get_device_name(0) if device == 'cuda:0' else 'cpu'))
 
 
-if __name__ == '__main__':  # 执行入口 以后要写一些配置在里面
+if __name__ == '__main__':  # 执行入口
     main()
