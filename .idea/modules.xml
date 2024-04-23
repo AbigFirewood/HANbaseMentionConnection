@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/HAN-connection.iml" filepath="$PROJECT_DIR$/HAN-connection.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/NHA-link.iml" filepath="$PROJECT_DIR$/.idea/NHA-link.iml" />
     </modules>
   </component>
 </project>

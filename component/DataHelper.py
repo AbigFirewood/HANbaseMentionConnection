@@ -1,34 +1,19 @@
 import spacy
-import random
-import pickle as pkl
-import numpy as np
+
 import torch
-import itertools
 
-import torch.utils.data as data
-import torch.nn.functional as fn
-
-from torch.autograd import Variable
-from collections import Counter
-from tqdm import tqdm
-from itertools import groupby
-from operator import itemgetter
-from collections import OrderedDict
-import pickle as pkl
-from random import choice, random
 from torch.utils.data import DataLoader, Dataset
-from torch.utils.data.sampler import Sampler
 
 
 class DocumentsDataset(Dataset):
-    def __init__(self, documents): # 暂时没有问题
+    def __init__(self, documents):
         super(DocumentsDataset, self).__init__()
         self.documents = documents  # 存储数据的
 
-    def __len__(self):  # 返回长度 这个是需要重写的 暂时没有问题
+    def __len__(self):  # 返回长度
         return len(self.documents)
 
-    def __getitem__(self, index): # 暂时没有问题
+    def __getitem__(self, index):
         return self.documents[index]
 
     @staticmethod  # 获取train test 包装
@@ -36,20 +21,19 @@ class DocumentsDataset(Dataset):
         return DocumentsDataset(train), DocumentsDataset(test)
 
 
-class Vectorizer():  # 文本分词器对象 已经调试没有问题
+class Vectorizer():  # 文本分词器对象
     def __init__(self, word_dict=None, max_sent_len=8, max_word_len=32):
         self.word_dict = word_dict  # 一个可选参数，用于传入一个词汇字典。如果没有传入，则默认为 None
         self.nlp = spacy.load("en_core_web_sm")
-        # 这行代码使用 spacy 库加载了一个预训练的英文模型，并将其赋值给类的实例变量 self.nlp 这个是用来进行词向量构建的。
-        # spacy 是一个用于自然语言处理的库，提供了诸如分词、词性标注、命名实体识别等功能。这里加载的 'en' 模型是针对英文的预训练模型。
-        self.max_sent_len = max_sent_len  # 一个可选参数，用于设置句子的最大长度。如果没有传入，则默认为 8。
-        self.max_word_len = max_word_len  # 一个可选参数，用于设置单词的最大长度。如果没有传入，则默认为 32。
-        self.stop_words = None
+        # 使用 spacy 库加载了一个预训练的英文模型，并将其赋值给类的实例变量 self.nlp
+        self.max_sent_len = max_sent_len  # 句子长度
+        self.max_word_len = max_word_len  # 单词长度
+        self.stop_words = None  # 停用词
 
-    def vectorize_batch(self, t, trim=True): # 函数已经调试没有问题
+    def vectorize_batch(self, t, trim=True):
         return self._vect_dict(t, trim)
 
-    def _vect_dict(self, t, trim): # 函数已经调试没有问题
+    def _vect_dict(self, t, trim):  # 用于分词
         # 该方法接受两个参数：t（待处理的文本列表）和 trim（一个布尔值，指示是否需要对文本进行截断处理）。
         if self.word_dict is None:
             print(

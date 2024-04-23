@@ -151,26 +151,22 @@ def batcher_builder(vectorizer, trim=True):
     return doc_batch
 
 
-def get_loss(criterion, out):  # [tensor[a,b,c.....],int]
-    device = out[0][0].device
-    temp = torch.Tensor().to(device)
-    for mention in out:
-        gold_n = mention[1] - 1
-        gold = mention[0][gold_n]
-        length = mention[0].shape[0]  # torch.Size([3])
-        gold = torch.full((length,), gold.item()).to(device)
-        target = torch.ones(length, ).to(device)
-        loss = criterion(gold, mention[0], target).unsqueeze(0)
-        temp = torch.cat((temp, loss))
-    return temp.mean(dim=0)
-    # [loss,.....]
+def get_loss(criterion, out, gold_list):  # [tensor[a,b,c.....],int]
+    device = out.device
+    temp = torch.zeros(out.shape,device= device)
+    for i, gold in enumerate(gold_list):
+        temp[i, :] = out[i, gold - 1]
+    target = torch.ones(out.shape ,device= device) # .to(device)
+    loss = criterion(temp, out, target)  # .to(device)
+    return loss
 
 
-def accuracy(out):  # [tensor[a,b,c.....],int]
+def accuracy(out, gold_list):  # [tensor[a,b,c.....],int]
     all_acc = 0
-    for men in out:
-        _, max_i = torch.max(men[0], 0)
-        if max_i.item() == men[1]:
+
+    _, max_i = torch.max(out, 0)
+    for i, men in enumerate(gold_list):
+        if max_i[i].item() == men - 1:
             all_acc += 1
     temp = torch.Tensor([all_acc]).float()
     return all_acc, temp / len(out) * 100
@@ -206,31 +202,40 @@ def train(epoch, epochs, net, optimizer, dataset, criterion, device, logger):
     # ok_all: 用于累计当前epoch中预测正确的样本数。
     # data_tensors: 使用new_tensors函数创建新的张量（为批处理数据准备的）。
     with tqdm(total=len(dataset), desc="训练中:Epoch {}/{}".format(epoch, epochs)) as pbar:
-        #  遍历数据集中的每个批次
-        #         # 返回 处理好的句子表示 tensor[句子[单词标号]]
-        #         # 统计数据 排序的(句子长度,文档长度,文档标号,句子在文档中的标号,[([所有备选标号],对应正确标号,对应句子在文档中的标号)])
-        #         # 和原来的文档结构
-        #         return batch_t, stat, document
         for iteration, (batch_t, stat, document) in enumerate(dataset):
             data = data_tensors.resize_(batch_t.size()).copy_(batch_t)
             optimizer.zero_grad()  # 清除之前的梯度
-            out = net(data, stat)  # (评分tensor,gold）list 前向传播
-            loss = get_loss(criterion, out)  # tensor[loss]
-            ok, per = accuracy(out)
+            for name, param in net.named_parameters():
+            # print(name, param.size())
+                print(name)  # , param.size())
+                print(param.grad)  # 打印权重值
+            out, gold_list = net(data, stat)  # (评分tensor,gold）list 前向传播
+            loss = get_loss(criterion, out, gold_list)  # tensor[loss]
+            ok, per = accuracy(out, gold_list)
             # 累计当前批次的损失值
             epoch_loss += loss.item()
             # 执行反向传播，计算梯度
             loss.backward()
+            for name, param in net.named_parameters():
+            # print(name, param.size())
+                 print(name)  # , param.size())
+                 print(param.grad)  # 打印权重值
+            '''
+            for name, param in net.named_parameters():
+                # print(name, param.size())
+                print(name)  # , param.size())
+                print(param.grad)  # 打印权重值
+                '''
             optimizer.step()  # 优化
             ok_all += per.item()
             # 使用优化器更新模型的参数
-            optimizer.step()
             # 更新进度条
             pbar.update(1)
             pbar.set_postfix({"acc": ok_all / (iteration + 1), "CE": epoch_loss / (iteration + 1)})
         logger.info("===> Epoch {}/{} Complete: Avg. Loss: {:.4f}, {}% accuracy".format(epoch, epochs,
                                                                                         epoch_loss / len(dataset),
                                                                                         ok_all / len(dataset)))
+        # return None
 
 
 def test(epoch, epochs, net, dataset, criterion, device, logger, max_acc):
@@ -242,9 +247,9 @@ def test(epoch, epochs, net, dataset, criterion, device, logger, max_acc):
         with tqdm(total=len(dataset), desc="测试中:Epoch {}/{}".format(epoch + 1, epochs)) as pbar:
             for iteration, (batch_t, stat, dcoument) in enumerate(dataset):
                 data = data_tensors.resize_(batch_t.size()).copy_(batch_t)
-                out = net(data, stat)  # (评分tensor,gold）list 前向传播
-                loss = get_loss(criterion, out)
-                ok, per = accuracy(out)
+                out, gold_list = net(data, stat)  # (评分tensor,gold）list 前向传播
+                loss = get_loss(criterion, out, gold_list)
+                ok, per = accuracy(out, gold_list)
                 epoch_loss += loss.item()
                 ok_all += per.data[0]
                 pred += 1
@@ -263,7 +268,7 @@ def main():
     batch_size = 4
     learning_rate = 1e-5
     epochs = 499
-    num_workers = 2
+    num_workers = 0  # 2
     clip_grad = 10
 
     # 路径
@@ -320,7 +325,7 @@ def main():
                                  collate_fn=test_batch_builder, pin_memory=True)
 
     # 设置优化目标函数
-    criterion = nn.MarginRankingLoss(reduction='mean')
+    criterion = nn.MarginRankingLoss()  # reduction='mean')
 
     # 加载模型到设备
     net = net.to(device)
