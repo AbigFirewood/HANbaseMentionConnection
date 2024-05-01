@@ -1,4 +1,3 @@
-import datetime
 import json
 import time
 
@@ -36,19 +35,14 @@ def get_word_tenser(string):
 
 def load_embeddings(file):  # 加载HAN词嵌入表
     emb_file = open(file, "r", encoding='utf-8').readlines()
-    word_d = {}  # 初始化字典
-    word_d["_padding_"] = 0  # padding
-    word_d["_unk_word_"] = 1  # unKnown
+    word_d = {"_padding_": 0, "_unk_word_": 1}  # 初始化字典
     # 加载词汇表
     word_t = []
     for i, line in tqdm(enumerate(emb_file, 2), desc="加载词嵌入表中...", total=len(emb_file)):
-        # 使用 tqdm（一个进度条库）来遍历文件的每一行。
-        # enumerate(iterable, start=0) start 是可选参数，表示计数的起始值。默认情况下，start 是 0，表示从 0 开始计数。
         sql = line.strip().split()
         word_d[sql[0]] = i
         # 将 spl 列表的第一个元素（即单词）作为键 将当前索引 i 作为值，存储到字典 word_d 中。
         # 这样，word_d 字典就建立了一个从单词到其在 tensor 中位置的映射。
-
         # 取出文件中的词向量
         word_emb_list = sql[2].split(',')
         # 转化float
@@ -79,7 +73,7 @@ def load_stop_words(file):  # 加载停用词表
     return stop_file
 
 
-def load_ent_vec(file):
+def load_ent_vec(file):  # 加载实体嵌入
     ent_dic = {}
     ent_file = open(file, "r", encoding="utf-8").readlines()
     for i, ent in tqdm(enumerate(ent_file), desc="加载实体表征中...", total=len(ent_file)):
@@ -91,7 +85,7 @@ def load_ent_vec(file):
     return ent_dic
 
 
-def get_mentions_in_sent(start, sent_index, mentions):  # 获取对应句子的所有mention信息 # 调试过后 应该是没问题
+def get_mentions_in_sent(start, sent_index, mentions):  # 获取对应句子的所有mention信息
     sent_m = []
     next_n = 0
     for m_n, mention in enumerate(mentions[start:], start):  # 左闭右开
@@ -125,7 +119,7 @@ def get_stat(list_doc, mentions):  # 获取stat，包含一系列以句子为单
 
 
 def batcher_builder(vectorizer, trim=True):
-    def doc_batch(dic):  # 运行正常
+    def doc_batch(dic):
         # 这是 tuple_batcher_builder 返回的内部函数，它接受一个字典dic，包括所有信息
         document = []
         mentions = []
@@ -151,24 +145,25 @@ def batcher_builder(vectorizer, trim=True):
     return doc_batch
 
 
-def get_loss(criterion, out, gold_list):  # [tensor[a,b,c.....],int]
+def get_loss(criterion, out, gold_list, mask_list):  # [tensor[a,b,c.....],int]
     device = out.device
-    temp = torch.zeros(out.shape,device= device)
+    target = torch.zeros(out.shape, device=device)
     for i, gold in enumerate(gold_list):
-        temp[i, :] = out[i, gold - 1]
-    target = torch.ones(out.shape ,device= device) # .to(device)
-    loss = criterion(temp, out, target)  # .to(device)
+        target[i, :mask_list[i]] = out[i, gold - 1]  # 使用gold填充target
+        target[i, mask_list[i]:] = out[i, -1]  # 对于pad的部分填充最后一个pad元素
+    flag = torch.ones(out.shape, device=device)  # 全部是1代表正向排序
+    loss = criterion(target, out, flag)
     return loss
 
 
 def accuracy(out, gold_list):  # [tensor[a,b,c.....],int]
     all_acc = 0
-
-    _, max_i = torch.max(out, 0)
+    _, max_i = torch.max(out, 1)  # 找到最大值对应的index
     for i, men in enumerate(gold_list):
         if max_i[i].item() == men - 1:
             all_acc += 1
     temp = torch.Tensor([all_acc]).float()
+    int = len(out)
     return all_acc, temp / len(out) * 100
 
 
@@ -205,27 +200,25 @@ def train(epoch, epochs, net, optimizer, dataset, criterion, device, logger):
         for iteration, (batch_t, stat, document) in enumerate(dataset):
             data = data_tensors.resize_(batch_t.size()).copy_(batch_t)
             optimizer.zero_grad()  # 清除之前的梯度
-            for name, param in net.named_parameters():
+            # for name, param in net.named_parameters():
+            '''
             # print(name, param.size())
                 print(name)  # , param.size())
-                print(param.grad)  # 打印权重值
-            out, gold_list = net(data, stat)  # (评分tensor,gold）list 前向传播
-            loss = get_loss(criterion, out, gold_list)  # tensor[loss]
+                print(param.grad)  # 打印权重梯度
+            '''
+            out, gold_list, mask_list = net(data, stat)  # 前向传播
+            loss = get_loss(criterion, out, gold_list, mask_list)  # tensor[loss]
             ok, per = accuracy(out, gold_list)
             # 累计当前批次的损失值
             epoch_loss += loss.item()
             # 执行反向传播，计算梯度
             loss.backward()
-            for name, param in net.named_parameters():
-            # print(name, param.size())
-                 print(name)  # , param.size())
-                 print(param.grad)  # 打印权重值
             '''
             for name, param in net.named_parameters():
                 # print(name, param.size())
                 print(name)  # , param.size())
-                print(param.grad)  # 打印权重值
-                '''
+                print(param.grad)  # 打印权重梯度
+            '''
             optimizer.step()  # 优化
             ok_all += per.item()
             # 使用优化器更新模型的参数
@@ -235,7 +228,6 @@ def train(epoch, epochs, net, optimizer, dataset, criterion, device, logger):
         logger.info("===> Epoch {}/{} Complete: Avg. Loss: {:.4f}, {}% accuracy".format(epoch, epochs,
                                                                                         epoch_loss / len(dataset),
                                                                                         ok_all / len(dataset)))
-        # return None
 
 
 def test(epoch, epochs, net, dataset, criterion, device, logger, max_acc):
@@ -247,8 +239,8 @@ def test(epoch, epochs, net, dataset, criterion, device, logger, max_acc):
         with tqdm(total=len(dataset), desc="测试中:Epoch {}/{}".format(epoch + 1, epochs)) as pbar:
             for iteration, (batch_t, stat, dcoument) in enumerate(dataset):
                 data = data_tensors.resize_(batch_t.size()).copy_(batch_t)
-                out, gold_list = net(data, stat)  # (评分tensor,gold）list 前向传播
-                loss = get_loss(criterion, out, gold_list)
+                out, gold_list, mask_list = net(data, stat)  # (评分tensor,gold）list 前向传播
+                loss = get_loss(criterion, out, gold_list, mask_list)
                 ok, per = accuracy(out, gold_list)
                 epoch_loss += loss.item()
                 ok_all += per.data[0]
@@ -267,8 +259,8 @@ def main():
     hid_size = 300  # 设置表征维度
     batch_size = 4
     learning_rate = 1e-5
-    epochs = 499
-    num_workers = 0  # 2
+    epochs = 500
+    num_workers = 0  # 2  # 0  # 2  # 0  # 2
     clip_grad = 10
 
     # 路径
@@ -277,7 +269,7 @@ def main():
     file_word_info = ".//dataset//word_info.txt"
     file_stop_word = ".//dataset//stopword.txt"
     file_ent_vec = ".//dataset//ent_vec.txt"
-    file_log = ".//log//log1.txt"
+    file_log = ".//log//log.txt"
     logger = log_helper(file_log)
 
     # 分词器设置
@@ -285,7 +277,7 @@ def main():
     max_sents = 32
 
     # 设备
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    device = 'cpu'  # cuda' if torch.cuda.is_available() else 'cpu'
 
     # 获取基本数据
     train_set, test_set = get_train_and_test_from_json(file_train, file_test)
@@ -325,7 +317,7 @@ def main():
                                  collate_fn=test_batch_builder, pin_memory=True)
 
     # 设置优化目标函数
-    criterion = nn.MarginRankingLoss()  # reduction='mean')
+    criterion = nn.MarginRankingLoss(reduction='sum')  # reduction='mean')
 
     # 加载模型到设备
     net = net.to(device)
@@ -338,13 +330,13 @@ def main():
     max_test_acc = -1.0
     for epoch in range(1, epochs + 1):
         logger.info(32 * "-" + "epoch{}start!".format(epoch) + 32 * "-")
-        train(epoch, epochs + 1, net, optimizer, dataloader_train, criterion, device, logger)
-        max_test_acc = test(epoch, epochs + 1, net, dataloader_test, criterion, device, logger, max_test_acc)
+        train(epoch, epochs + 1, net, optimizer, dataloader_train, criterion, device, logger)  # 训练
+        max_test_acc = test(epoch, epochs + 1, net, dataloader_test, criterion, device, logger, max_test_acc)  # 测试
         logger.info(32 * "-" + "epoch{}end!".format(epoch) + 32 * "-")
     end = time.perf_counter()
     logger.info(32 * "-" + "The program ends in {} s".format(str(end - start)) + 32 * "-")
     logger.info("The max_test_acc is {}".format(max_test_acc))
-    logger.info("device" + str(torch.cuda.get_device_name(0) if device == 'cuda:0' else 'cpu'))
+    logger.info("device" + str(torch.cuda.get_device_name(0) if device == 'cuda' else 'cpu'))
 
 
 if __name__ == '__main__':  # 执行入口

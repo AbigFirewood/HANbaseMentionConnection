@@ -67,12 +67,11 @@ class HANConnect(nn.Module):
         self.ent_dic = None
         self.embed = nn.Embedding(ntoken, emb_size, padding_idx=0)
         RNN_size = int(hid_size / 2)
-        self.word = AttentionalBiGRU(emb_size, RNN_size)  # hid_size)
-        self.sent = AttentionalBiGRU(hid_size, RNN_size)  # hid_size)
+        self.word = AttentionalBiGRU(emb_size, RNN_size)
+        self.sent = AttentionalBiGRU(hid_size, RNN_size)
         self.sim = F.cosine_similarity
-        self.lin_out = nn.Linear(200 * 2, hid_size)  # 线性层  用于输出最后的评分
+        self.lin_out = nn.Linear(2, 1)  # 线性层  用于输出最后的评分
         self.register_buffer("docs", torch.Tensor())  # buffer
-        self.output_layer = nn.Linear(hid_size, 200)
 
     def set_emb_tensor(self, emb_tensor):
         self.emb_size = emb_tensor.size(-1)  # # 获取嵌入的维度大小
@@ -102,8 +101,6 @@ class HANConnect(nn.Module):
                 menbuilder[doc_id].extend(sent_view_mentions)
         # 获得有序字典一个 文本id 和 句子的id 对应 {文本[重新排序的句子id]}
         list_r = list(reversed(builder))  # 反向表示
-        # docs = self._buffers["docs"].clone().detach().resize_(len(builder), len(builder[list_r[0]]),sents.size(
-        # 1)).fill_(0)
         docs = Variable(self._buffers["docs"].resize_(len(builder), len(builder[list_r[0]]), sents.size(1)).fill_(0),
                         requires_grad=False)
         # docs 的表示 [文档[句子[句子特征]]]
@@ -124,42 +121,44 @@ class HANConnect(nn.Module):
         return docs, lens, real_order, mentions_l, sent_l
 
     def get_mention_ranks(self, doc_emb, doc_mentions, sents_emb, sents_mentions):
-        doc_mentions_num = [len(i) for i in doc_mentions]
-        sents_mentions_num = [len(i) for i in sents_mentions]
+        """
+        :param doc_emb: 文档特征
+        :param doc_mentions: 文档对应mention
+        :param sents_emb: 句子特征
+        :param sents_mentions: 句子对应mention
+        :return: out_un, gold_list
+        """
+        doc_mentions_num = [len(i) for i in doc_mentions]  # 计算每个doc对应的mention数量
+        sents_mentions_num = [len(i) for i in sents_mentions]  # 计算每个句子对应的mention数量
         device = doc_emb.device
-        mentions_doc_view = torch.repeat_interleave(doc_emb, torch.tensor(doc_mentions_num, device=device), dim=0)
+        mentions_doc_view = torch.repeat_interleave(doc_emb, torch.tensor(doc_mentions_num, device=device),
+                                                    dim=0)  # 进行扩充 给每个mention准备一个句子和文档表示
         mentions_sent_view = torch.repeat_interleave(sents_emb, torch.tensor(sents_mentions_num, device=device), dim=0)
         # 此处有grad
-        meantaions_list = [item for sublist in doc_mentions for item in sublist]
-        gold_list = [i for (_, i, _) in meantaions_list]
-        # sorted_list = sorted(meantaions_list, key=lambda x: (x[1], len(x[0])), reverse=True)
-        max_size = max(len(x[0]) for x in meantaions_list)
-        for i in range(len(meantaions_list)):
-            data_t = torch.zeros(
-                (mentions_doc_view.shape[0], max_size, mentions_doc_view.shape[1]), device=device)
+        meantaions_list = [item for sublist in doc_mentions for item in sublist]  # 获取所有mentions
+        gold_list = [i for (_, i, _) in meantaions_list]  # 获取gold_index
+        max_size = max(len(x[0]) for x in meantaions_list)  # 获取最大候选实体数量
+        size_mask = [len(x[0]) for x in meantaions_list]
+        data_t = torch.zeros(  # 存储实体向量表示
+            (mentions_doc_view.shape[0], max_size, mentions_doc_view.shape[1]), device=device)
         for i, (candidates, gold, _) in enumerate(meantaions_list):
             for j, candidate in enumerate(candidates):
-                if candidate in self.ent_dic:
+                if candidate in self.ent_dic:  # 有
                     data_t[i, j, :] = self.ent_dic[candidate]
-                else:
+                else:  # 没有
                     candidate_emb = F.normalize(torch.randn(self.emb_size, ), dim=0)
                     self.ent_dic[candidate] = candidate_emb  # 加入词典
                     data_t[i, j, :] = self.ent_dic[candidate]
-        final_doc_emb = mentions_doc_view.unsqueeze(1).repeat_interleave(max_size, dim=1)
+        final_doc_emb = mentions_doc_view.unsqueeze(1).repeat_interleave(max_size, dim=1)  # 扩充doc_emb
         final_sent_emb = mentions_sent_view.unsqueeze(1).repeat_interleave(max_size, dim=1)  # 此处有梯度
-        doc_sim = self.sim(final_doc_emb, data_t, dim=2)
+        doc_sim = self.sim(final_doc_emb, data_t, dim=2)  # 计算相似度
         sent_sim = self.sim(final_sent_emb, data_t, dim=2)  # 此处有梯度
-        y_pad = 200 - doc_sim.size(1)
-        if y_pad < 0:
-            doc_sim_pad = doc_sim[:, :200]
-            sent_sim_pad = sent_sim[:, :200]
-        else:
-            doc_sim_pad = F.pad(doc_sim, (0, y_pad, 0, 0))
-            sent_sim_pad = F.pad(sent_sim, (0, y_pad, 0, 0))  # 此处有梯度
-        temp = torch.cat((doc_sim_pad, sent_sim_pad), dim=1)  #
-        out = F.relu(self.lin_out(temp))
-        out_f = self.output_layer(out)
-        return out_f, gold_list
+        doc_sim_t = doc_sim.unsqueeze(2)
+        sent_sim_t = sent_sim.unsqueeze(2)
+        view_two = torch.cat((doc_sim_t, sent_sim_t), dim=2)  # 将相似度合并
+        out = self.lin_out(view_two)  # 输出最后评分
+        out_un = out.squeeze(2)  # 压缩一个维度
+        return out_un, gold_list,size_mask
 
     def forward(self, batch_sent, stats):
         """
@@ -184,19 +183,12 @@ class HANConnect(nn.Module):
         doc_view = self.sent(packed_rev)  # 获取嵌入
 
         # real_order排序
-        final_docs_view = doc_view[real_order, :]  # [句子特征]
-        # final_mentions_l = []
-        # final_sent_list = []
-        final_mentions_l = [mentions_l[i] for i in real_order]
-        final_sent_list = [sent_list[i] for i in real_order]
-        # for i in real_order:
-        # final_mentions_l.append(mentions_l[i])  # [([所有备选标号],对应正确标号,句子向量表示)]]
-        # final_sent_list.append(sent_list[i])
-        final_sent_list = [item for sublist in final_sent_list for item in sublist]
-        final_sent_mentions = []
-        # for i in final_sent_list:
-        # final_sent_mentions.append(mentions[i])
-        final_sent_mentions = [mentions_temp[i] for i in final_sent_list]
-        final_sent_view = sent_view[final_sent_list, :]  # 此处可以梯度传播
+        final_docs_view = doc_view[real_order, :]  # 所有文档特征
+        final_mentions_l = [mentions_l[i] for i in real_order] # 文档对应mention
+        final_sent_list = [sent_list[i] for i in real_order] # 文档对应句子
+        final_sent_list = [item for sublist in final_sent_list for item in sublist] # 所有句子顺序
+        final_sent_mentions = [mentions_temp[i] for i in final_sent_list] # 句子对应mention顺序
+        final_sent_view = sent_view[final_sent_list, :]  # 所有句子特征
+        # 计算相似度
         return self.get_mention_ranks(final_docs_view, final_mentions_l, final_sent_view, final_sent_mentions)
         # 返回所有loss需要的东西
